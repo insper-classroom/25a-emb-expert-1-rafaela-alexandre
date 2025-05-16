@@ -9,39 +9,107 @@
 #include "pico/stdlib.h"
 #include <stdio.h>
 
-struct led_task_arg {
-    int gpio;
-    int delay;
-};
+#include "hardware/pwm.h"
+#include "hardware/clocks.h"
+#include "hardware/adc.h"
 
-void led_task(void *p) {
-    struct led_task_arg *a = (struct led_task_arg *)p;
+#define UART_ID uart0
+#define BAUD_RATE 115200
+// Definições de pinos
+const int ldr1= 26; // GPIO 26 = canal 0
+const int ldr2 = 27; // GPIO 27 = canal 1
 
-    gpio_init(a->gpio);
-    gpio_set_dir(a->gpio, GPIO_OUT);
+int currentMillisOne = 1400;
+int servoPinOne = 15;
+
+int currentMillisTwo = 1400;
+int servoPinTwo = 14;
+
+float clockDiv = 64;
+float wrap = 39062;
+
+QueueHandle_t xQueueADC;
+
+int map_adc_to_us(uint16_t adc_value) {
+    int pos_us = ((adc_value * (2400 - 400)) / 4000) + 400;
+    if (pos_us < 400) pos_us = 400;
+    if (pos_us > 2400) pos_us = 2400;
+    return pos_us;
+}
+
+void setMillis(int servoPin, float millis)
+{
+    pwm_set_gpio_level(servoPin, (millis/20000.f)*wrap);
+}
+
+void setServo(int servoPin, float startMillis)
+{
+    gpio_set_function(servoPin, GPIO_FUNC_PWM);
+    uint slice_num = pwm_gpio_to_slice_num(servoPin);
+
+    pwm_config config = pwm_get_default_config();
+    
+    uint64_t clockspeed = clock_get_hz(5);
+    clockDiv = 64;
+    wrap = 39062;
+
+    while (clockspeed/clockDiv/50 > 65535 && clockDiv < 256) clockDiv += 64; 
+    wrap = clockspeed/clockDiv/50;
+
+    pwm_config_set_clkdiv(&config, clockDiv);
+    pwm_config_set_wrap(&config, wrap);
+
+    pwm_init(slice_num, &config, true);
+
+    setMillis(servoPin, startMillis);
+}
+void ldr1_task(void *p) {
+    adc_gpio_init(ldr1);
+
     while (true) {
-        gpio_put(a->gpio, 1);
-        vTaskDelay(pdMS_TO_TICKS(a->delay));
-        gpio_put(a->gpio, 0);
-        vTaskDelay(pdMS_TO_TICKS(a->delay));
+        adc_select_input(0);  
+        uint16_t adc_value = adc_read();
+
+        int pos_us = map_adc_to_us(adc_value);
+        setMillis(servoPinOne, pos_us);
+
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+// Task para ler LDR2 e controlar Servo 2
+void ldr2_task(void *p) {
+    adc_gpio_init(ldr2);
+
+    while (true) {
+        adc_select_input(1); 
+        uint16_t adc_value = adc_read();
+
+        int pos_us = map_adc_to_us(adc_value);
+        setMillis(servoPinTwo, pos_us);
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
 int main() {
     stdio_init_all();
-    printf("Start LED blink\n");
+    adc_init();
+    
+    setServo(servoPinOne, currentMillisOne);
+    setServo(servoPinTwo, currentMillisTwo);
 
-    struct led_task_arg arg1 = {20, 100};
-    xTaskCreate(led_task, "LED_Task 1", 256, &arg1, 1, NULL);
-
-    struct led_task_arg arg2 = {21, 200};
-    xTaskCreate(led_task, "LED_Task 2", 256, &arg2, 1, NULL);
-
-    struct led_task_arg arg3 = {22, 300};
-    xTaskCreate(led_task, "LED_Task 3", 256, &arg3, 1, NULL);
-
+    gpio_set_function(0, GPIO_FUNC_UART);
+    gpio_set_function(1, GPIO_FUNC_UART);
+ 
+    xTaskCreate(ldr1_task, "LDR1 TASK", 4095, NULL, 1, NULL);
+    xTaskCreate(ldr2_task, "LDR2 TASK", 4095, NULL, 1, NULL);
+ 
     vTaskStartScheduler();
+ 
+    while (true){
+    } 
+ }
+ 
 
-    while (true)
-        ;
-}
