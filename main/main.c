@@ -39,7 +39,6 @@ void setMillis(int servoPin, float millis)
 void setServo(int servoPin, float startMillis)
 {
     float clockDiv = 64;
-    float wrap = 39062;
     gpio_set_function(servoPin, GPIO_FUNC_PWM);
     uint slice_num = pwm_gpio_to_slice_num(servoPin);
 
@@ -47,10 +46,10 @@ void setServo(int servoPin, float startMillis)
     
     uint64_t clockspeed = clock_get_hz(5);
     clockDiv = 64;
-    wrap = 39062;
+
 
     while (clockspeed/clockDiv/50 > 65535 && clockDiv < 256) clockDiv += 64; 
-    wrap = clockspeed/clockDiv/50;
+    float wrap = clockspeed/clockDiv/50;
 
     pwm_config_set_clkdiv(&config, clockDiv);
     pwm_config_set_wrap(&config, wrap);
